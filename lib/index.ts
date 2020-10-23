@@ -1,1 +1,2 @@
-export { default } from './firestore';
+import { Firestore, initialize } from './firestore';
+export { Firestore, initialize };

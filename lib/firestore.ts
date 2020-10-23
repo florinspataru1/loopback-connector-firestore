@@ -60,7 +60,17 @@ class Firestore extends Connector {
 			let result: any[];
 			if (where && where.id) {
 				const { id } = where;
-				result = await this.findById(model, id);
+				if (id.inq) {
+					const results = await Promise.all(
+						id.inq.map(async (id: any) => {
+							const result = await this.findById(model, id);
+							return result[0];
+						})
+					);
+					return callback(null, results);
+				} else {
+					result = await this.findById(model, id);
+				}
 			} else if (this.hasFilter(filter)) {
 				result = await this.findFilteredDocuments(model, filter);
 			} else {
@@ -463,7 +473,13 @@ class Firestore extends Connector {
 
 		if (where) {
 			for (const key in where) {
-				if (where.hasOwnProperty(key)) {
+				if (key === 'and') {
+					const and = where[key];
+					for (const key in and) {
+						const andValue = and[key];
+						query = this.addFiltersToQuery(query, andValue);
+					}
+				} else if (where.hasOwnProperty(key)) {
 					const value = { [key]: where[key] };
 					query = this.addFiltersToQuery(query, value);
 				}
