@@ -5,6 +5,7 @@
 	"types": "./dist/index.d.ts",
 	"description": "Firebase Firestore connector for the LoopBack framework.",
 	"scripts": {
+		"prepare": "npm run build",
 		"lint": "eslint . --fix --ext .ts,.js",
 		"typecheck": "tsc --project tsconfig.json",
 		"pretest": "npm run build",
