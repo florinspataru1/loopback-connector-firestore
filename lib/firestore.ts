@@ -67,7 +67,12 @@ class Firestore extends Connector {
 							return result[0];
 						})
 					);
-					return callback(null, results);
+					return callback(
+						null,
+						results.filter(
+							(row: any) => typeof row.deleted === 'undefined' || !row.deleted
+						)
+					);
 				} else {
 					result = await this.findById(model, id);
 				}
@@ -96,14 +101,10 @@ class Firestore extends Connector {
 		_options: any,
 		callback: ICallback
 	) => {
-		this.db
-			.collection(model)
-			.doc(id)
-			.get()
-			.then((doc: DocumentSnapshot) => {
-				callback(null, doc.exists);
-			})
-			.catch((err: Error) => callback(err));
+		this._exists(model, id, _options, (err, res: DocumentSnapshot) => {
+			if (err) callback(err);
+			callback(null, res.exists);
+		});
 	};
 
 	/**
@@ -121,9 +122,8 @@ class Firestore extends Connector {
 		callback: ICallback
 	) => {
 		if (Object.keys(where).length > 0) {
-			this.db
-				.collection(model)
-				.where(Object.keys(where)[0], '==', Object.values(where)[0])
+			const query = this.buildNewQuery(model, { where });
+			query
 				.get()
 				.then((doc: QuerySnapshot) => {
 					callback(null, doc.docs.length);
@@ -163,9 +163,12 @@ class Firestore extends Connector {
 		callback: ICallback
 	) => {
 		const self = this;
-		this.exists(model, where.id, null, (err, res: boolean) => {
+		this._exists(model, where.id, null, (err, res: DocumentSnapshot) => {
 			if (err) callback(err);
-			if (res) {
+			if (res && res.exists) {
+				// save in History first
+				this.saveHistory(model, res, 'update');
+
 				self.db
 					.collection(model)
 					.doc(where.id)
@@ -196,9 +199,12 @@ class Firestore extends Connector {
 		callback: ICallback
 	) => {
 		const self = this;
-		this.exists(model, id, null, (err, res: boolean) => {
+		this._exists(model, id, null, (err, res: DocumentSnapshot) => {
 			if (err) callback(err);
-			if (res) {
+			if (res && res.exists) {
+				// save in History first
+				this.saveHistory(model, res, 'update-replace');
+
 				self.db
 					.collection(model)
 					.doc(id)
@@ -228,9 +234,12 @@ class Firestore extends Connector {
 		callback: ICallback
 	) => {
 		const self = this;
-		this.exists(model, id, null, (err, res: boolean) => {
+		this._exists(model, id, null, (err, res: DocumentSnapshot) => {
 			if (err) callback(err);
-			if (res) {
+			if (res && res.exists) {
+				// save in History first
+				this.saveHistory(model, res, 'update-attributes');
+
 				self.db
 					.collection(model)
 					.doc(id)
@@ -257,13 +266,17 @@ class Firestore extends Connector {
 		callback: ICallback
 	) => {
 		const self = this;
-		this.exists(model, id, null, (err, res: boolean) => {
+		this._exists(model, id, null, (err, res: DocumentSnapshot) => {
 			if (err) callback(err);
-			if (res) {
+			if (res && res.exists) {
+				// save in History first
+				this.saveHistory(model, res, 'delete');
+
 				self.db
 					.collection(model)
 					.doc(id)
-					.delete()
+					// .delete()
+					.set({ deleted: true }, { merge: true })
 					.then(() => {
 						// Document deleted successfully.
 						callback(null, []);
@@ -284,21 +297,7 @@ class Firestore extends Connector {
 		const self = this;
 
 		if (where.id) {
-			this.exists(model, where.id, null, (err, res: boolean) => {
-				if (err) callback(err);
-				if (res) {
-					self.db
-						.collection(model)
-						.doc(where.id)
-						.delete()
-						.then(() => {
-							// Document deleted successfully.
-							callback(null, []);
-						});
-				} else {
-					callback(new Error('Document not found'));
-				}
-			});
+			this.destroyById(model, where.id, callback);
 		} else {
 			this.deleteCollection(this.db, model, 10)
 				.then(() => {
@@ -347,7 +346,10 @@ class Firestore extends Connector {
 	public create = (model: string, data: any, callback: ICallback) => {
 		this.db
 			.collection(model)
-			.add(data)
+			.add({
+				...data,
+				deleted: false
+			})
 			.then((ref: DocumentReference) => {
 				callback(null, ref.id);
 			})
@@ -364,9 +366,12 @@ class Firestore extends Connector {
 		callback: ICallback
 	) => {
 		const self = this;
-		this.exists(model, where.id, null, (err, res: boolean) => {
+		this._exists(model, where.id, null, (err, res: DocumentSnapshot) => {
 			if (err) callback(err);
-			if (res) {
+			if (res && res.exists) {
+				// save in History first
+				this.saveHistory(model, res, 'update');
+
 				self.db
 					.collection(model)
 					.doc(where.id)
@@ -390,14 +395,65 @@ class Firestore extends Connector {
 	) => {
 		const results: any[] = [];
 
-		snapshots.forEach(item =>
+		snapshots.forEach(item => {
+			const data: any = item.data();
+			delete data.deleted;
+
 			results.push({
 				id: item.id,
-				...item.data()
-			})
-		);
+				...data
+			});
+		});
 
 		return results;
+	};
+
+	private saveHistory = async (
+		model: string,
+		documentSnapshot: DocumentSnapshot,
+		operationType: string
+	) => {
+		const ref = this.db.collection(model);
+		return await ref
+			.doc(documentSnapshot.id)
+			.collection(`${model}History`)
+			.doc()
+			.set({
+				...documentSnapshot.data(),
+				operation_type: operationType, // eslint-disable-line camelcase
+				operation_date: new Date().getTime() / 1000 // eslint-disable-line camelcase
+			});
+	};
+
+	/**
+	 * Internal method to get documents by history
+	 * retrieve the last snapshot of the document based on the operation_date
+	 *
+	 * @param string model
+	 * @param {IFilter} filter The filter
+	 */
+	private getFromHistoryQuery = async (model: string, filter: IFilter) => {
+		const query = this.buildNewQuery(`${model}History`, filter);
+		const result = await query.get();
+		const groups: { [key: string]: any } = {};
+		result.forEach((doc: any) => {
+			const data = doc.data();
+			const id = doc.id;
+			delete data.deleted;
+			if (typeof groups[id] === 'undefined') {
+				groups[id] = data;
+			} else if (
+				typeof groups[id].operation_date !== 'undefined' &&
+				typeof data.operation_date !== 'undefined' &&
+				data.operation_date > groups[id].operation_date
+			) {
+				groups[id] = data;
+			}
+		});
+
+		return Object.keys(groups).map(id => {
+			return { id, ...groups[id] };
+		});
 	};
 
 	/**
@@ -422,7 +478,9 @@ class Firestore extends Connector {
 				.get();
 			if (!documentSnapshot.exists) return Promise.resolve([]);
 
-			const result = { id: documentSnapshot.id, ...documentSnapshot.data() };
+			const data = documentSnapshot.data();
+			delete data.deleted;
+			const result = { id: documentSnapshot.id, ...data };
 
 			return Promise.resolve([result]);
 		} catch (error) {
@@ -469,7 +527,12 @@ class Firestore extends Connector {
 	private buildNewQuery = (model: string, filter: IFilter) => {
 		const { where, limit, fields, skip } = filter;
 
-		let query = this.db.collection(model);
+		let query = null;
+		if (model.indexOf('History') > 0) {
+			query = this.db.collectionGroup(model);
+		} else {
+			query = this.db.collection(model);
+		}
 
 		if (where) {
 			for (const key in where) {
@@ -484,6 +547,11 @@ class Firestore extends Connector {
 					query = this.addFiltersToQuery(query, value);
 				}
 			}
+			if (typeof where.deleted === 'undefined') {
+				query.where('deleted', '==', false);
+			}
+		} else {
+			query.where('deleted', '==', false);
 		}
 
 		let { order } = filter;
@@ -568,6 +636,22 @@ class Firestore extends Connector {
 		return new Promise((resolve, reject) => {
 			this.deleteQueryBatch(db, query, batchSize, resolve, reject);
 		});
+	};
+
+	private _exists = (
+		model: string,
+		id: number | string,
+		_options: any,
+		callback: ICallback
+	) => {
+		this.db
+			.collection(model)
+			.doc(id)
+			.get()
+			.then((doc: DocumentSnapshot) => {
+				callback(null, doc);
+			})
+			.catch((err: Error) => callback(err));
 	};
 }
 
