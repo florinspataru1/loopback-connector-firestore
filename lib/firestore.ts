@@ -513,6 +513,37 @@ class Firestore extends Connector {
 	 * @param {IFilter} filter The filter
 	 */
 	private findFilteredDocuments = async (model: string, filter: IFilter) => {
+		if (filter.where && Object.keys(filter.where).length) {
+			for (const key in filter.where) {
+				if (Array.isArray(filter.where[key].inq || filter.where[key].in)) {
+					const array = filter.where[key].inq || filter.where[key].in;
+					if (array.length > 10) {
+						const promises = [];
+						for (let i = 0; i <= array.length / 10; i++) {
+							const ids = array.slice(i * 10, (i + 1) * 10);
+
+							let query = null;
+							if (model.indexOf('History') > 0) {
+								query = this.db.collectionGroup(model);
+							} else {
+								query = this.db.collection(model);
+							}
+							query.where(key, 'in', ids);
+							promises.push(query.get());
+						}
+
+						return Promise.all(promises).then(batches => {
+							let res: any[] = [];
+							batches.forEach(batch => {
+								res = res.concat(this.completeDocumentResults(batch));
+							});
+
+							return res;
+						});
+					}
+				}
+			}
+		}
 		const query = this.buildNewQuery(model, filter);
 		const snapshots = await query.get();
 
