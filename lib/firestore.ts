@@ -494,7 +494,9 @@ class Firestore extends Connector {
 	 */
 	private findAllOfModel = async (model: string) => {
 		try {
-			const collectionRef = this.db.collection(model);
+			const collectionRef = this.db
+				.collection(model)
+				.where('deleted', '==', false);
 			const snapshots = await collectionRef.get();
 
 			if (snapshots.empty || snapshots.size === 0) return Promise.resolve([]);
@@ -512,7 +514,23 @@ class Firestore extends Connector {
 	 * @param {String} model The model name
 	 * @param {IFilter} filter The filter
 	 */
-	private findFilteredDocuments = async (model: string, filter: IFilter) => {
+	private findFilteredDocuments = async (
+		model: string,
+		filter: IFilter
+	): Promise<any> => {
+		if (
+			filter.where &&
+			filter.where.and &&
+			Array.isArray(filter.where.and) &&
+			filter.where.and.length > 0
+		) {
+			let newWhereCondition: any = {};
+			filter.where.and.forEach((val: any) => {
+				newWhereCondition = Object.assign(newWhereCondition, val);
+			});
+			const newFilter = Object.assign(filter, { where: newWhereCondition });
+			return await this.findFilteredDocuments(model, newFilter);
+		}
 		if (filter.where && Object.keys(filter.where).length) {
 			for (const key in filter.where) {
 				if (Array.isArray(filter.where[key].inq || filter.where[key].in)) {
@@ -528,7 +546,7 @@ class Firestore extends Connector {
 							} else {
 								query = this.db.collection(model);
 							}
-							query.where(key, 'in', ids);
+							query = query.where('deleted', '==', false).where(key, 'in', ids);
 							promises.push(query.get());
 						}
 
@@ -567,22 +585,16 @@ class Firestore extends Connector {
 
 		if (where) {
 			for (const key in where) {
-				if (key === 'and') {
-					const and = where[key];
-					for (const key in and) {
-						const andValue = and[key];
-						query = this.addFiltersToQuery(query, andValue);
-					}
-				} else if (where.hasOwnProperty(key)) {
+				if (where.hasOwnProperty(key)) {
 					const value = { [key]: where[key] };
 					query = this.addFiltersToQuery(query, value);
 				}
 			}
 			if (typeof where.deleted === 'undefined') {
-				query.where('deleted', '==', false);
+				query = query.where('deleted', '==', false);
 			}
 		} else {
-			query.where('deleted', '==', false);
+			query = query.where('deleted', '==', false);
 		}
 
 		let { order } = filter;
