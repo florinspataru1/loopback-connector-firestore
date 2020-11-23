@@ -132,6 +132,7 @@ class Firestore extends Connector {
 		} else {
 			this.db
 				.collection(model)
+				.where('deleted','==',false)
 				.get()
 				.then((doc: QuerySnapshot) => {
 					callback(null, doc.docs.length);
