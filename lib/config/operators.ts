@@ -7,7 +7,8 @@ const operators: { [key: string]: WhereFilterOp } = {
 	gte: '>=',
 	in: 'in',
 	eq: '==',
-	inq: 'in'
+	inq: 'in',
+	like: 'array-contains'
 };
 
 export default Object.freeze(operators);

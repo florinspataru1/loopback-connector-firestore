@@ -132,7 +132,7 @@ class Firestore extends Connector {
 		} else {
 			this.db
 				.collection(model)
-				.where('deleted','==',false)
+				.where('deleted', '==', false)
 				.get()
 				.then((doc: QuerySnapshot) => {
 					callback(null, doc.docs.length);
@@ -531,6 +531,34 @@ class Firestore extends Connector {
 			});
 			const newFilter = Object.assign(filter, { where: newWhereCondition });
 			return await this.findFilteredDocuments(model, newFilter);
+		}
+
+		if (
+			filter.where &&
+			filter.where.or &&
+			Array.isArray(filter.where.or) &&
+			filter.where.or.length > 0
+		) {
+			let results: any[] = [];
+			await Promise.all(
+				filter.where.or.map(async (val: any) => {
+					const newFilter = Object.assign(filter, { where: val });
+					const filterResult = await this.findFilteredDocuments(
+						model,
+						newFilter
+					);
+					results = [...results, ...filterResult];
+				})
+			);
+			if (results.length > 0) {
+				const uniqueArray = Array.from(new Set(results.map(val => val.id))).map(
+					id => {
+						return results.find(val => val.id === id);
+					}
+				);
+				return uniqueArray;
+			}
+			return results;
 		}
 		if (filter.where && Object.keys(filter.where).length) {
 			for (const key in filter.where) {
