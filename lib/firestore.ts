@@ -691,7 +691,13 @@ class Firestore extends Connector {
 			}
 			const comparison = value[operation];
 			const operator = operators[operation];
-			resultQuery = resultQuery.where(key, operator, comparison);
+			if (operation === 'between') {
+				resultQuery = resultQuery
+					.where(key, '>=', comparison[0])
+					.where(key, '<=', comparison[1]);
+			} else {
+				resultQuery = resultQuery.where(key, operator, comparison);
+			}
 		}
 
 		return resultQuery;
