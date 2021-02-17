@@ -566,7 +566,7 @@ class Firestore extends Connector {
 					const array = filter.where[key].inq || filter.where[key].in;
 					if (array.length > 10) {
 						const promises = [];
-						for (let i = 0; i <= array.length / 10; i++) {
+						for (let i = 0; i < array.length / 10; i++) {
 							const ids = array.slice(i * 10, (i + 1) * 10);
 
 							let query = null;
